@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { View, FormData, Reservation, TeamMember } from '../types';
 import { LOCATIONS, TIME_SLOTS } from '../constants';
 import * as googleScriptService from '../services/googleScriptService';
-import { isTimeSlotBookingAllowed, validateStudentId, getAvailableDates } from '../utils/helpers';
+import { getSeatCount, isTimeSlotBookingAllowed, validateStudentId, getAvailableDates } from '../utils/helpers';
 import Header from './Header';
 import Spinner from './common/Spinner';
 import SeatLayout from './SeatLayout';
@@ -101,20 +101,12 @@ const BookingView: React.FC<BookingViewProps> = ({ setView, darkMode, setDarkMod
 
         setIsLoading(true);
         const selectedTimeSlot = TIME_SLOTS.find(t => t.id === formData.timeSlot);
-        
-        if (!selectedTimeSlot) {
-            setBookingResult({ success: false, message: '유효하지 않은 시간대입니다. 다시 선택해주세요.', reason: '시간대 오류' });
+        const isSeatAlreadyTaken = todayReservations.some(r => r.location === formData.location && r.seat === formData.seat && r.timeSlot === selectedTimeSlot!.label);
+
+        if (!isStudyRoom && isSeatAlreadyTaken) {
+            setBookingResult({ success: false, message: '선택하신 좌석이 이미 예약되어 있습니다.', reason: '좌석 중복' });
             setIsLoading(false);
             return;
-        }
-
-        if (!isStudyRoom) {
-            const isAvailable = !todayReservations.some(r => r.location === formData.location && r.seat === formData.seat && r.timeSlot === selectedTimeSlot.label);
-            if (!isAvailable) {
-                setBookingResult({ success: false, message: '선택하신 좌석이 이미 예약되어 있습니다.', reason: '좌석 중복' });
-                setIsLoading(false);
-                return;
-            }
         }
         
         const validTeamMembers = formData.teamMembers.filter(m => m.studentId.trim() && m.name.trim());
@@ -133,7 +125,7 @@ const BookingView: React.FC<BookingViewProps> = ({ setView, darkMode, setDarkMod
             formData.name,
             formData.location,
             formData.seat || (isStudyRoom ? '팀룸' : 'N/A'),
-            selectedTimeSlot.label,
+            selectedTimeSlot?.label,
             reservationId,
             new Date().toLocaleString('ko-KR'),
             teamMembersString
@@ -141,12 +133,14 @@ const BookingView: React.FC<BookingViewProps> = ({ setView, darkMode, setDarkMod
         
         try {
             await googleScriptService.saveReservation(sheetsData);
-            const newReservation = { ...formData, reservationId, timestamp: new Date().toISOString(), timeSlot: selectedTimeSlot.label, teamMembers: validTeamMembers };
+            const newReservation = { ...formData, reservationId, timestamp: new Date().toISOString(), timeSlot: selectedTimeSlot!.label, teamMembers: validTeamMembers };
             setTodayReservations(prev => [...prev, newReservation]);
 
+            const successMessage = '예약이 완료되었습니다!';
+
             setBookingResult({
-                success: true, message: '예약이 완료되었습니다!', reason: '정상 처리',
-                reservationId, details: { ...newReservation, time: selectedTimeSlot.time }
+                success: true, message: successMessage, reason: '정상 처리',
+                reservationId, details: { ...newReservation, time: selectedTimeSlot!.time }
             });
             setFormData(prev => ({ ...prev, location: '', seat: '', timeSlot: '', studentId: '', name: '', teamMembers: Array(5).fill({ studentId: '', name: '' }) }));
         } catch (error) {
@@ -199,7 +193,7 @@ const BookingView: React.FC<BookingViewProps> = ({ setView, darkMode, setDarkMod
                     <div>
                         <div className="font-medium">현재 시각: {currentTime.toLocaleTimeString('ko-KR')}</div>
                         <div className="text-sm mt-1">{timeRestrictionMessage ? `${timeRestrictionMessage.message} ${timeRestrictionMessage.detail}` : '각 시간대는 시작 10분 전까지 예약 가능합니다.'}</div>
-                        {isLoadingReservations && <div className="text-sm mt-2 flex items-center gap-2"><Spinner />예약 현황 로딩 중...</div>}
+                        {isLoadingReservations && <div className="text-sm mt-2 flex items-center gap-2"><Spinner/>예약 현황 로딩 중...</div>}
                     </div>
                 </div>
             </div>
@@ -227,7 +221,7 @@ const BookingView: React.FC<BookingViewProps> = ({ setView, darkMode, setDarkMod
                 <div>
                     <label className="block text-sm font-medium mb-2">📅 예약 날짜</label>
                     <select value={formData.date} disabled className="w-full p-3 border rounded-lg bg-white border-gray-300 dark:bg-gray-800 dark:border-gray-600 disabled:opacity-50">
-                        {getAvailableDates().map((d: { value: string; label: string }) => <option key={d.value} value={d.value}>{d.label}</option>)}
+                        {getAvailableDates().map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
                     </select>
                 </div>
 
@@ -238,8 +232,8 @@ const BookingView: React.FC<BookingViewProps> = ({ setView, darkMode, setDarkMod
                         {LOCATIONS.map(loc => <option key={loc} value={loc}>{loc}</option>)}
                     </select>
                 </div>
-                
-                 {formData.location && formData.location !== '스터디룸' && (
+
+                {formData.location && formData.location !== '스터디룸' && (
                     <div>
                         <label className="block text-sm font-medium mb-2">좌석 선택</label>
                         <SeatLayout
@@ -247,7 +241,7 @@ const BookingView: React.FC<BookingViewProps> = ({ setView, darkMode, setDarkMod
                             selectedSeat={formData.seat}
                             selectedTimeSlot={formData.timeSlot}
                             onSeatSelect={(seat) => setFormData({ ...formData, seat })}
-                            todayReservations={todayReservations}
+                            reservations={todayReservations}
                         />
                     </div>
                 )}
